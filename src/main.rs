@@ -1,30 +1,17 @@
 mod game;
-use std::sync::mpsc;
-use std::thread;
+
+use game::button_finder::ButtonFinder;
+
+const WINDOW_TITLE: &str = "24luling";
+const BUTTON_CONFIG_PATH: &str = "assets/buttons/buttons.toml";
 
 fn main() {
     game::quit_game_bot::QuitWatchdog::start_async_loop();
 
-    match game::window_finder::find_game_window("24luling") {
-        Some(w) => println!("✅ 找到窗口: {:?}", w.title()),
-        None => println!("❌ 没找到窗口"),
-    }
+    let window = game::window_finder::require_game_window(WINDOW_TITLE);
 
-    // 单生产者单消费者 channel
-    let (tx, rx) = mpsc::channel::<game::game_info::GameInfo>();
+    let button_finder = ButtonFinder::load(BUTTON_CONFIG_PATH)
+        .expect("❌ 按钮模板加载失败，检查 assets/buttons/buttons.toml 和对应的图片文件");
 
-    // 写线程(生产者)
-    let writer_handle = thread::spawn(move || {
-        game::writer::run(tx);
-    });
-
-    // 读线程(消费者)
-    let reader_handle = thread::spawn(move || {
-        game::reader::run(rx);
-    });
-
-    writer_handle.join().unwrap();
-    reader_handle.join().unwrap();
-
-    println!("程序结束");
+    game::bot::run(window, button_finder);
 }

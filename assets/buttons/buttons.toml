@@ -1,0 +1,29 @@
+# 按钮模板配置。base_window_width 是这批模板图对应的基准窗口宽度，
+# 用于运行时按当前窗口实际宽度换算缩放系数。
+base_window_width = 3264
+[[buttons]]
+name = "pickup"
+template = "pickup.png"
+click_dx = 0
+click_dy = 0
+
+[[buttons]]
+name = "attack"
+template = "attack.png"
+click_dx = 0
+click_dy = 0
+
+[[buttons]]
+name = "close"
+template = "close.png"
+click_dx = 0
+click_dy = 0
+
+# minimap 比较特殊：模板是圆盘顶部固定不变的 "N" 徽章，
+# 但真正要点击的是徽章下方的圆盘本体，所以点击位置需要在匹配到的位置上
+# 再往下偏移一段距离（click_dy），而不是直接点匹配到的地方。
+[[buttons]]
+name = "minimap"
+template = "minimap.png"
+click_dx = 0
+click_dy = 132

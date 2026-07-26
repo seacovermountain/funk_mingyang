@@ -1,5 +1,9 @@
+pub mod actions;
+pub mod bot;
+pub mod button_finder;
 pub mod game_info;
+pub mod ocr;
 pub mod quit_game_bot;
-pub mod reader;
+pub mod state;
+pub mod util;
 pub mod window_finder;
-pub mod writer;
