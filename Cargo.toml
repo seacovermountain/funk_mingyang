@@ -1,0 +1,16 @@
+[package]
+name = "fuck_mingyang"
+version = "0.1.0"
+edition = "2024"
+
+[dependencies]
+xcap = "0.9"
+enigo = "0.2"
+device_query="2.1.0"
+image="0.25"
+opencv = { version = "0.98", default-features = false, features = ["imgproc", "imgcodecs", "clang-runtime"] }
+serde = { version = "1.0", features = ["derive"] }
+toml = "0.8"
+chrono = "0.4"
+rand="0.8"
+ocr-rs = "2.3"

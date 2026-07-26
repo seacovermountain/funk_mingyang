@@ -1,0 +1,12 @@
+# Dependencies
+/target
+
+# macOS
+.DS_Store
+
+# Debug images
+DEBUG_*.png
+
+# Editor/IDE
+.vscode/
+.idea/
