@@ -83,3 +83,13 @@ pub fn get_button(name: &str) -> Option<ButtonInfo> {
 pub fn snapshot() -> Vec<ButtonInfo> {
     cache().lock().unwrap().values().cloned().collect()
 }
+
+/// 把这一批按钮合并写入缓存，不影响已经缓存的其它按钮。
+/// 用在 startup_check 分两次校准的场景——第一次写 attack/pickup/minimap，
+/// 第二次写 close，两次互不覆盖。
+pub fn insert_buttons(buttons: Vec<ButtonInfo>) {
+    let mut map = cache().lock().unwrap();
+    for b in buttons {
+        map.insert(b.name.clone(), b);
+    }
+}

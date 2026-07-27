@@ -1,5 +1,6 @@
 pub mod actions;
 pub mod alarm;
+pub mod app_config;
 pub mod bot;
 pub mod button_finder;
 pub mod game_info;

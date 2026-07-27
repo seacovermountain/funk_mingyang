@@ -14,8 +14,9 @@
 use crate::game::actions;
 use crate::game::alarm;
 use crate::game::button_finder::{ButtonFinder, rgba_to_gray_mat};
-use crate::game::state::ButtonInfo;
+use crate::game::state::{self, ButtonInfo};
 use crate::game::util::capture_window;
+use enigo::Enigo;
 use std::collections::HashMap;
 use std::thread;
 use std::time::{Duration, Instant};
@@ -29,7 +30,8 @@ pub fn run(window: &Window, button_finder: &ButtonFinder, enigo: &mut Enigo) {
     println!("🔧 [启动自检] 验证常驻按钮 attack / pickup / minimap ...");
     let (capture_width, buttons) =
         wait_for_buttons(window, button_finder, &["attack", "pickup", "minimap"]);
-    println!("✅ [启动自检] 三个常驻按钮均已识别到");
+    println!("✅ [启动自检] 三个常驻按钮均已识别到，缓存坐标");
+    state::insert_buttons(buttons.values().cloned().collect());
 
     let minimap = buttons.get("minimap").expect("已确认存在于本轮结果里");
     if let Err(e) = actions::click_button(enigo, window, capture_width, minimap) {
@@ -40,7 +42,8 @@ pub fn run(window: &Window, button_finder: &ButtonFinder, enigo: &mut Enigo) {
 
     println!("🔧 [启动自检] 验证 close 按钮 ...");
     let (capture_width2, buttons2) = wait_for_buttons(window, button_finder, &["close"]);
-    println!("✅ [启动自检] close 按钮已识别到，点击链路验证通过");
+    println!("✅ [启动自检] close 按钮已识别到，点击链路验证通过，缓存坐标");
+    state::insert_buttons(buttons2.values().cloned().collect());
 
     let close = buttons2.get("close").expect("已确认存在于本轮结果里");
     if let Err(e) = actions::click_button(enigo, window, capture_width2, close) {
@@ -48,7 +51,7 @@ pub fn run(window: &Window, button_finder: &ButtonFinder, enigo: &mut Enigo) {
     }
     println!("🖱️  已点击 close，地图已关闭，恢复正常画面");
 
-    println!("🎉 [启动自检] 全部通过，进入正式运行");
+    println!("🎉 [启动自检] 全部通过，4 个按钮坐标已缓存，进入正式运行");
 }
 
 fn capture_and_match(
