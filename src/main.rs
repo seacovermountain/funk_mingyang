@@ -7,11 +7,10 @@ const BUTTON_CONFIG_PATH: &str = "assets/buttons/buttons.toml";
 
 fn main() {
     game::quit_game_bot::QuitWatchdog::start_async_loop();
-
     let window = game::window_finder::require_game_window(WINDOW_TITLE);
-
+    game::actions::activate_window(&window).expect("❌ 点击窗口中心失败，检查鼠标模拟权限");
     let button_finder = ButtonFinder::load(BUTTON_CONFIG_PATH)
         .expect("❌ 按钮模板加载失败，检查 assets/buttons/buttons.toml 和对应的图片文件");
-
+    game::startup_check::run(&window, &button_finder);
     game::bot::run(window, button_finder);
 }
