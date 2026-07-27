@@ -6,6 +6,7 @@ pub mod button_finder;
 pub mod game_info;
 pub mod mouse_action;
 pub mod ocr;
+pub mod position_reader;
 pub mod quit_game_bot;
 pub mod startup_check;
 pub mod state;

@@ -76,6 +76,11 @@ fn run_ocr(
         None => println!("   🗺️  地图名字: 未识别到"),
     }
 
+    match text_ocr::extract_hp(&blocks, width as i32, height as i32, cfg) {
+        Some((cur, max, pct)) => println!("   ❤️  血量: {}/{} ({:.1}%)", cur, max, pct),
+        None => println!("   ❤️  血量: 未识别到"),
+    }
+
     let monsters = text_ocr::match_monsters(&blocks, &app_config.target_monsters, cfg);
     if monsters.is_empty() {
         println!("   🐲 怪物白名单命中: 无");

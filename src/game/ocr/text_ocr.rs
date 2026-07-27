@@ -54,6 +54,12 @@ pub struct TextOcrConfig {
     pub map_name_top_frac: f64,
     pub map_name_right_frac: f64,
     pub map_name_bottom_frac: f64,
+
+    // 血量数字区域（整帧截图的比例），比如角色头像左边那串 "2130/2130"。
+    pub hp_left_frac: f64,
+    pub hp_top_frac: f64,
+    pub hp_right_frac: f64,
+    pub hp_bottom_frac: f64,
 }
 
 impl Default for TextOcrConfig {
@@ -69,6 +75,11 @@ impl Default for TextOcrConfig {
             map_name_top_frac: 0.02,
             map_name_right_frac: 0.99,
             map_name_bottom_frac: 0.085,
+
+            hp_left_frac: 0.23,
+            hp_top_frac: 0.935,
+            hp_right_frac: 0.27,
+            hp_bottom_frac: 0.96,
         }
     }
 }
@@ -389,4 +400,70 @@ pub fn rgba_to_bgr_mat(raw: &[u8], width: u32, height: u32) -> opencv::Result<Ma
         core::AlgorithmHint::ALGO_HINT_DEFAULT,
     )?;
     Ok(bgr)
+}
+
+/// 从同一份 OCR 结果里挑出落在"血量数字"区域内的文字块，解析出
+/// "当前/最大"两个数字，算出血量百分比。不需要白名单匹配，直接把
+/// 这个区域里识别到的数字解析出来就行。
+///
+/// 返回 (当前血量, 最大血量, 百分比)；解析失败（文字残缺、格式不对、
+/// 区域内没识别到东西）返回 None，调用方自己决定怎么处理（比如沿用
+/// 上一次读到的值，不要让血量突然跳变成 0）。
+pub fn extract_hp(
+    blocks: &[RawTextBlock],
+    frame_w: i32,
+    frame_h: i32,
+    cfg: &TextOcrConfig,
+) -> Option<(u32, u32, f32)> {
+    let roi_x1 = (frame_w as f64 * cfg.hp_left_frac) as i32;
+    let roi_y1 = (frame_h as f64 * cfg.hp_top_frac) as i32;
+    let roi_x2 = (frame_w as f64 * cfg.hp_right_frac) as i32;
+    let roi_y2 = (frame_h as f64 * cfg.hp_bottom_frac) as i32;
+
+    let mut best: Option<&RawTextBlock> = None;
+
+    for block in blocks {
+        if block.confidence < cfg.min_confidence {
+            continue;
+        }
+        let cx = block.x + block.w / 2;
+        let cy = block.y + block.h / 2;
+        if cx < roi_x1 || cx > roi_x2 || cy < roi_y1 || cy > roi_y2 {
+            continue;
+        }
+
+        let better = match best {
+            Some(b) => block.confidence > b.confidence,
+            None => true,
+        };
+        if better {
+            best = Some(block);
+        }
+    }
+
+    parse_hp_text(&best?.text)
+}
+
+/// 把 "2130/2130" 这种格式的文字解析成 (当前, 最大, 百分比)。
+/// OCR 偶尔会把 "/" 认错成别的符号，做一点容错：只要文字里能找到
+/// 恰好两段连续数字，就当作 (当前, 最大)，不死抠分隔符必须是 "/"。
+fn parse_hp_text(text: &str) -> Option<(u32, u32, f32)> {
+    let digit_groups: Vec<&str> = text
+        .split(|c: char| !c.is_ascii_digit())
+        .filter(|s| !s.is_empty())
+        .collect();
+
+    if digit_groups.len() != 2 {
+        return None;
+    }
+
+    let current: u32 = digit_groups[0].parse().ok()?;
+    let max: u32 = digit_groups[1].parse().ok()?;
+
+    if max == 0 {
+        return None;
+    }
+
+    let percent = (current as f32 / max as f32) * 100.0;
+    Some((current, max, percent))
 }
