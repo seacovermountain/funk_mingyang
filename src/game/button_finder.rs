@@ -1,39 +1,70 @@
 // src/game/button_finder.rs
 //
-// 职责：读 buttons.toml -> 加载每个按钮的模板图 -> 在当前帧里做模板匹配。
+// 职责：编译时嵌入每个按钮的模板图（见 EMBEDDED_BUTTONS）-> 在当前帧
+// 里做模板匹配。原来是读 buttons.toml + 同目录图片文件，现在图片和
+// 元数据都嵌进了可执行文件，不再读外部文件。
 //
 // 分辨率处理思路不变：模板按 scale = 当前窗口宽度/基准窗口宽度 缩放后
 // 再去匹配整帧画面，窗口宽度没怎么变时复用上次缩放好的模板。
 //
 // 点击位置 = 匹配区域中心 + (click_dx, click_dy) * scale。
 // 大多数按钮偏移量是 (0,0)；minimap 这种匹配锚点和点击点不重合的，
-// 偏移量从 buttons.toml 里读。
+// 偏移量在 EMBEDDED_BUTTONS 里单独配置。
 
-use opencv::core::{AlgorithmHint, Mat, Point, Size};
+use opencv::core::{AlgorithmHint, Mat, Point, Size, Vector};
 use opencv::imgcodecs;
 use opencv::imgproc;
 use opencv::prelude::*;
-use serde::Deserialize;
-use std::fs;
-use std::path::Path;
 use std::sync::Mutex;
 use std::time::Instant;
 
 use crate::game::state::ButtonInfo;
 
-#[derive(Debug, Deserialize)]
-struct ButtonsFile {
-    base_window_width: u32,
-    buttons: Vec<ButtonEntry>,
-}
+/// 这批按钮模板图对应的基准窗口宽度，运行时按当前窗口实际宽度换算
+/// 缩放系数（原来在 buttons.toml 里的 base_window_width，现在图片和
+/// 配置都嵌进可执行文件了，这个值也一起挪过来）。
+const BASE_WINDOW_WIDTH: u32 = 3264;
 
-#[derive(Debug, Deserialize)]
-struct ButtonEntry {
-    name: String,
-    template: String,
+/// 一个内置按钮模板：名字、编译时嵌入的图片字节、点击偏移量。
+/// 原来是从 buttons.toml + 同目录下的图片文件读的，现在图片和这几个
+/// 元数据都在编译时嵌入可执行文件——按钮图标基本不会变，嵌进去以后
+/// 部署只需要一个可执行文件，不用再带 assets/buttons/ 这个文件夹。
+struct EmbeddedButton {
+    name: &'static str,
+    bytes: &'static [u8],
     click_dx: i32,
     click_dy: i32,
 }
+
+const EMBEDDED_BUTTONS: &[EmbeddedButton] = &[
+    EmbeddedButton {
+        name: "pickup",
+        bytes: include_bytes!("../../assets/buttons/pickup.png"),
+        click_dx: 0,
+        click_dy: 0,
+    },
+    EmbeddedButton {
+        name: "attack",
+        bytes: include_bytes!("../../assets/buttons/attack.png"),
+        click_dx: 0,
+        click_dy: 0,
+    },
+    EmbeddedButton {
+        name: "close",
+        bytes: include_bytes!("../../assets/buttons/close.png"),
+        click_dx: 0,
+        click_dy: 0,
+    },
+    // minimap 比较特殊：模板是圆盘顶部固定不变的 "N" 徽章，
+    // 但真正要点击的是徽章下方的圆盘本体，所以点击位置需要在匹配到的
+    // 位置上再往下偏移一段距离（click_dy），而不是直接点匹配到的地方。
+    EmbeddedButton {
+        name: "minimap",
+        bytes: include_bytes!("../../assets/buttons/minimap.png"),
+        click_dx: 0,
+        click_dy: 132,
+    },
+];
 
 struct Template {
     name: String,
@@ -60,35 +91,21 @@ pub struct ButtonFinder {
 }
 
 impl ButtonFinder {
-    /// 从 buttons.toml 加载全部按钮模板。
-    /// `config_path` 例如 "assets/buttons/buttons.toml"；
-    /// 模板图路径按这个配置文件所在目录解析。
-    pub fn load(config_path: &str) -> Result<Self, String> {
-        let config_path = Path::new(config_path);
-        let dir = config_path.parent().unwrap_or_else(|| Path::new("."));
-
-        let raw = fs::read_to_string(config_path)
-            .map_err(|e| format!("读取按钮配置失败 {:?}: {}", config_path, e))?;
-
-        let parsed: ButtonsFile = toml::from_str(&raw)
-            .map_err(|e| format!("解析按钮配置失败 {:?}: {}", config_path, e))?;
-
-        let mut templates = Vec::with_capacity(parsed.buttons.len());
-        for entry in &parsed.buttons {
-            let img_path = dir.join(&entry.template);
-            let mat = imgcodecs::imread(
-                img_path.to_str().unwrap_or_default(),
-                imgcodecs::IMREAD_GRAYSCALE,
-            )
-            .map_err(|e| format!("加载按钮模板失败 {:?}: {}", img_path, e))?;
+    /// 从编译时嵌入的按钮图标数据加载全部按钮模板（不再读外部文件）。
+    pub fn load() -> Result<Self, String> {
+        let mut templates = Vec::with_capacity(EMBEDDED_BUTTONS.len());
+        for entry in EMBEDDED_BUTTONS {
+            let buf = Vector::from_slice(entry.bytes);
+            let mat = imgcodecs::imdecode(&buf, imgcodecs::IMREAD_GRAYSCALE)
+                .map_err(|e| format!("解码内置按钮模板失败 {}: {}", entry.name, e))?;
 
             if mat.empty() {
-                return Err(format!("按钮模板是空图: {:?}", img_path));
+                return Err(format!("内置按钮模板是空图: {}", entry.name));
             }
 
-            println!("🖼️  已加载按钮模板: {} ({:?})", entry.name, img_path);
+            println!("🖼️  已加载内置按钮模板: {}", entry.name);
             templates.push(Template {
-                name: entry.name.clone(),
+                name: entry.name.to_string(),
                 mat,
                 click_dx: entry.click_dx,
                 click_dy: entry.click_dy,
@@ -98,12 +115,12 @@ impl ButtonFinder {
         println!(
             "✅ 按钮模板加载完成，共 {} 个（基准窗口宽度 {}）",
             templates.len(),
-            parsed.base_window_width
+            BASE_WINDOW_WIDTH
         );
 
         Ok(ButtonFinder {
             templates,
-            base_window_width: parsed.base_window_width,
+            base_window_width: BASE_WINDOW_WIDTH,
             resized_cache: Mutex::new(None),
         })
     }

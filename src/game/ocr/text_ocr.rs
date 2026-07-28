@@ -227,15 +227,19 @@ pub struct TextOcrRecognizer {
     engine: OcrEngine,
 }
 
+/// OCR 模型（检测/识别模型 + 字典）在编译时嵌入进可执行文件——这三个
+/// 文件加起来 60MB+，二进制体积会明显变大，换来的是部署只需要一个
+/// 可执行文件，不用再带 models/ 这个目录。这三个文件基本不会变
+/// （除非要换模型版本），嵌进去没有 config.toml 那种"要手动改"的顾虑。
+const DET_MODEL_BYTES: &[u8] = include_bytes!("../../../models/PP-OCRv6_medium_det.mnn");
+const REC_MODEL_BYTES: &[u8] = include_bytes!("../../../models/PP-OCRv6_medium_rec.mnn");
+const KEYS_BYTES: &[u8] = include_bytes!("../../../models/ppocr_keys_v6_medium.txt");
+
 impl TextOcrRecognizer {
-    /// 加载一次 OCR 引擎（det + rec 模型 + 字典），只在程序启动时初始化
-    /// 一次，怪物识别和物品识别共用这一个引擎实例。
-    pub fn new(
-        det_model_path: &str,
-        rec_model_path: &str,
-        keys_path: &str,
-    ) -> Result<Self, Box<dyn Error>> {
-        let engine = OcrEngine::new(det_model_path, rec_model_path, keys_path, None)?;
+    /// 从编译时嵌入的模型数据加载 OCR 引擎（不再读外部文件），
+    /// 只在程序启动时初始化一次，怪物识别和物品识别共用这一个引擎实例。
+    pub fn new() -> Result<Self, Box<dyn Error>> {
+        let engine = OcrEngine::from_bytes(DET_MODEL_BYTES, REC_MODEL_BYTES, KEYS_BYTES, None)?;
         Ok(Self { engine })
     }
 

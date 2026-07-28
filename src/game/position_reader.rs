@@ -19,19 +19,19 @@
 //! 2. 用 `debug_crop_digit_boxes` 把这块区域里检测到的每个数字字符
 //!    单独裁剪存盘。
 //! 3. 挑出 0~9 十个数字各一张、逗号一张,分别命名成 `0.png`...`9.png`、
-//!    `comma.png`,放进 `templates/digits/` 目录。
+//!    `comma.png`,放进 `assets/digits/` 目录，并在 `EMBEDDED_DIGIT_TEMPLATES`
+//!    里补一行对应的 `include_bytes!` 条目（模板图编译时就嵌进了可执行
+//!    文件，不是运行时读目录，所以新增模板需要改这个数组）。
 //! 4. 调用 `load_digit_templates()` 加载,再调用 `read_position()`
 //!    读取当前坐标。
 
 use opencv::{
     Result,
     core::{self, Mat, Point, Rect, Scalar, Size, Vector, min_max_loc},
-    imgcodecs::{self, IMREAD_COLOR, imread},
+    imgcodecs::{self, IMREAD_COLOR},
     imgproc::{self, TemplateMatchModes, match_template},
     prelude::*,
 };
-use std::fs;
-use std::path::Path;
 pub const TEMPLATE_REFERENCE_PHYSICAL_WIDTH: f64 = 3000.0;
 
 /// 一个数字/符号的参考模板小图。label 是 "0".."9" 或 ","。
@@ -120,51 +120,40 @@ impl CharBox {
     }
 }
 
-/// 📂 从目录批量加载数字模板。文件名(不含扩展名)就是字符标签,
-/// 比如 `templates/digits/0.png` -> label = "0"；逗号请存成
-/// `comma.png`(文件系统对逗号当文件名不一定友好),加载时自动转成 ","。
-pub fn load_digit_templates<P: AsRef<Path>>(dir: P) -> Result<Vec<DigitTemplate>> {
-    let mut templates = Vec::new();
+/// 编译时嵌入的数字/逗号模板图，(标签, 图片字节)。原来是从
+/// `assets/digits/` 目录动态读一批 png，现在这批图片就 11 张、基本
+/// 不会变，嵌进可执行文件后部署不用再带这个文件夹。
+const EMBEDDED_DIGIT_TEMPLATES: &[(&str, &[u8])] = &[
+    ("0", include_bytes!("../../assets/digits/0.png")),
+    ("1", include_bytes!("../../assets/digits/1.png")),
+    ("2", include_bytes!("../../assets/digits/2.png")),
+    ("3", include_bytes!("../../assets/digits/3.png")),
+    ("4", include_bytes!("../../assets/digits/4.png")),
+    ("5", include_bytes!("../../assets/digits/5.png")),
+    ("6", include_bytes!("../../assets/digits/6.png")),
+    ("7", include_bytes!("../../assets/digits/7.png")),
+    ("8", include_bytes!("../../assets/digits/8.png")),
+    ("9", include_bytes!("../../assets/digits/9.png")),
+    (",", include_bytes!("../../assets/digits/comma.png")),
+];
 
-    let entries = match fs::read_dir(&dir) {
-        Ok(e) => e,
-        Err(_) => {
-            println!(
-                "   ⚠️ [坐标数字模板库] 目录不存在或无法读取: {}(还没建模板库的话这是正常的)",
-                dir.as_ref().display()
-            );
-            return Ok(templates);
-        }
-    };
+/// 📂 从编译时嵌入的数据加载数字/逗号模板（不再读外部目录）。
+pub fn load_digit_templates() -> Result<Vec<DigitTemplate>> {
+    let mut templates = Vec::with_capacity(EMBEDDED_DIGIT_TEMPLATES.len());
 
-    for entry in entries.flatten() {
-        let path = entry.path();
-        if path.extension().and_then(|e| e.to_str()) != Some("png") {
-            continue;
-        }
-
-        let stem = match path.file_stem().and_then(|s| s.to_str()) {
-            Some(n) => n.to_string(),
-            None => continue,
-        };
-
-        let label = if stem == "comma" {
-            ",".to_string()
-        } else {
-            stem
-        };
-
-        let template = imread(&path.to_string_lossy(), IMREAD_COLOR)?;
+    for (label, bytes) in EMBEDDED_DIGIT_TEMPLATES {
+        let buf = Vector::from_slice(bytes);
+        let template = imgcodecs::imdecode(&buf, IMREAD_COLOR)?;
         if template.empty() {
-            println!(
-                "   ⚠️ [坐标数字模板库] 无法读取模板图片: {}",
-                path.display()
-            );
+            println!("   ⚠️ [坐标数字模板库] 内置模板解码失败: '{}'", label);
             continue;
         }
 
-        println!("   📎 [坐标数字模板库] 已加载模板: '{}'", label);
-        templates.push(DigitTemplate { label, template });
+        println!("   📎 [坐标数字模板库] 已加载内置模板: '{}'", label);
+        templates.push(DigitTemplate {
+            label: label.to_string(),
+            template,
+        });
     }
 
     println!(
@@ -348,14 +337,14 @@ fn match_char(
     // 🐛 调试用:把每个候选框实际匹配到的最高分数打出来,方便定位到底是
     // 哪个字符分数不够、差多少 —— 之前"整体识别失败"的日志只会说
     // "未能识别到角色坐标",看不出具体卡在哪一步。
-    println!(
-        "   🔢 [坐标字符匹配] 候选框(w={},h={}) 最佳匹配: {:?} | 分数: {:.2}% (阈值: {:.2}%)",
-        char_box.w,
-        char_box.h,
-        best_label,
-        best_score * 100.0,
-        min_confidence * 100.0
-    );
+    // println!(
+    //     "   🔢 [坐标字符匹配] 候选框(w={},h={}) 最佳匹配: {:?} | 分数: {:.2}% (阈值: {:.2}%)",
+    //     char_box.w,
+    //     char_box.h,
+    //     best_label,
+    //     best_score * 100.0,
+    //     min_confidence * 100.0
+    // );
 
     if best_score >= min_confidence {
         Ok(best_label.map(|l| (l, best_score)))
