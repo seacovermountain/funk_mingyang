@@ -1,6 +1,11 @@
-use xcap::Window;
+// src/game/util.rs
+//
+// 通用工具函数：截图、以及"RGBA 原始像素 -> OpenCV Mat"的格式转换。
+// 灰度图给按钮模板匹配用，BGR 图给 OCR 识别用，两边共用同一份转换
+// 逻辑，集中放这里，button_finder / ocr 各自就只剩自己的识别算法。
 
-use std::path::{Path, PathBuf};
+use opencv::{core, imgproc, prelude::*};
+use xcap::Window;
 
 /// 截取指定窗口画面，返回 (RGBA 原始像素, 宽, 高)。
 ///
@@ -17,19 +22,43 @@ pub fn capture_window(window: &Window) -> Option<(Vec<u8>, u32, u32)> {
     Some((raw_pixels, width, height))
 }
 
-/// 可执行文件自己所在的目录。所有资源路径都应该以这个目录为基准拼接，
-/// 不依赖"当前工作目录"——双击运行、拖到桌面运行、从任意路径运行，
-/// 只要 assets/、models/、config.toml 跟可执行文件放在一起，就能找到。
-pub fn exe_dir() -> PathBuf {
-    std::env::current_exe()
-        .expect("❌ 获取可执行文件自身路径失败")
-        .parent()
-        .expect("❌ 获取可执行文件所在目录失败")
-        .to_path_buf()
+/// 把 xcap 截图拿到的 RGBA 原始像素转换成 OpenCV 灰度图 Mat（按钮模板
+/// 匹配用）。
+pub fn rgba_to_gray_mat(raw: &[u8], width: u32, height: u32) -> opencv::Result<core::Mat> {
+    let mat_rgba = rgba_to_mat(raw, width, height)?;
+    let mut gray = core::Mat::default();
+    imgproc::cvt_color(
+        &mat_rgba,
+        &mut gray,
+        imgproc::COLOR_RGBA2GRAY,
+        0,
+        core::AlgorithmHint::ALGO_HINT_DEFAULT,
+    )?;
+    Ok(gray)
 }
 
-/// 把相对路径拼到可执行文件所在目录下，直接返回 PathBuf——各个
-/// ::load() 都接受 impl AsRef<Path>，不需要再转成 String。
-pub fn resource_path(base: &Path, relative: &str) -> PathBuf {
-    base.join(relative)
+/// 把 xcap 截图拿到的 RGBA 原始像素转换成 OpenCV BGR Mat（OCR 识别、
+/// 坐标数字识别用）。
+pub fn rgba_to_bgr_mat(raw: &[u8], width: u32, height: u32) -> opencv::Result<core::Mat> {
+    let mat_rgba = rgba_to_mat(raw, width, height)?;
+    let mut bgr = core::Mat::default();
+    imgproc::cvt_color(
+        &mat_rgba,
+        &mut bgr,
+        imgproc::COLOR_RGBA2BGR,
+        0,
+        core::AlgorithmHint::ALGO_HINT_DEFAULT,
+    )?;
+    Ok(bgr)
+}
+
+/// 两个转换函数共用的第一步：把裸像素数据包成 4 通道 RGBA Mat。
+///
+/// `reshape()` 返回的是一个借用视图（`BoxedRef<Mat>`），不是独立的
+/// `Mat`——这里 `try_clone()` 一次，转成真正拥有数据的 `Mat`，方便
+/// 调用方（rgba_to_gray_mat / rgba_to_bgr_mat）拿到手之后直接用。
+fn rgba_to_mat(raw: &[u8], width: u32, height: u32) -> opencv::Result<core::Mat> {
+    let borrowed = core::Mat::new_rows_cols_with_data(height as i32, (width * 4) as i32, raw)?;
+    let mat_1ch = borrowed.try_clone()?;
+    mat_1ch.reshape(4, height as i32)?.try_clone()
 }

@@ -3,7 +3,7 @@ mod game;
 use enigo::{Enigo, Settings};
 use game::app_config::AppConfig;
 use game::button_finder::ButtonFinder;
-use game::ocr::text_ocr::TextOcrRecognizer;
+use game::ocr::TextOcrRecognizer;
 use game::position_reader;
 use std::sync::mpsc;
 use std::thread;

@@ -11,7 +11,7 @@
 // 大多数按钮偏移量是 (0,0)；minimap 这种匹配锚点和点击点不重合的，
 // 偏移量在 EMBEDDED_BUTTONS 里单独配置。
 
-use opencv::core::{AlgorithmHint, Mat, Point, Size, Vector};
+use opencv::core::{Mat, Point, Size, Vector};
 use opencv::imgcodecs;
 use opencv::imgproc;
 use opencv::prelude::*;
@@ -228,19 +228,3 @@ impl ButtonFinder {
     }
 }
 
-/// 把 xcap 截图拿到的 RGBA 原始像素转换成 OpenCV 灰度图 Mat。
-pub fn rgba_to_gray_mat(raw: &[u8], width: u32, height: u32) -> opencv::Result<Mat> {
-    let borrowed = Mat::new_rows_cols_with_data(height as i32, (width * 4) as i32, raw)?;
-    let mat_1ch = borrowed.try_clone()?;
-    let mat_rgba = mat_1ch.reshape(4, height as i32)?;
-
-    let mut gray = Mat::default();
-    imgproc::cvt_color(
-        &mat_rgba,
-        &mut gray,
-        imgproc::COLOR_RGBA2GRAY,
-        0,
-        AlgorithmHint::ALGO_HINT_DEFAULT,
-    )?;
-    Ok(gray)
-}

@@ -1129,7 +1129,6 @@ dependencies = [
  "image",
  "ocr-rs",
  "opencv",
- "rand 0.8.7",
  "rodio",
  "serde",
  "strsim",

@@ -5,7 +5,7 @@
 .DS_Store
 
 # Debug images
-DEBUG_*.png
+debug/
 
 # Editor/IDE
 .vscode/

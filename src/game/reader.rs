@@ -5,8 +5,7 @@
 // print_snapshot 这个位置往下扩展；如果业务逻辑需要跨线程共享某些
 // 派生状态，在这里自己开一个全局变量存就行，不需要再回头改写线程。
 
-use crate::game::game_info::GameInfo;
-use crate::game::state;
+use crate::game::state::{self, GameInfo};
 use std::sync::mpsc::Receiver;
 
 pub fn run(rx: Receiver<GameInfo>) {

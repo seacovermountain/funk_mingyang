@@ -6,11 +6,10 @@
 // 关闭时只是睡一下继续循环检查，线程本身不退出，随时可以被重新打开。
 
 use crate::game::app_config::AppConfig;
-use crate::game::game_info::GameInfo;
-use crate::game::ocr::text_ocr::{self, TextOcrConfig, TextOcrRecognizer};
+use crate::game::ocr::{self, TextOcrConfig, TextOcrRecognizer};
 use crate::game::position_reader::{self, DigitTemplate, PositionReaderConfig};
-use crate::game::state;
-use crate::game::util::capture_window;
+use crate::game::state::{self, GameInfo};
+use crate::game::util::{capture_window, rgba_to_bgr_mat};
 use chrono::Local;
 use opencv::prelude::*;
 use std::sync::mpsc::Sender;
@@ -57,7 +56,7 @@ pub fn run(
         // 不是"处理到第几步的时候"，避免后面识别耗时把时间戳拖晚。
         let captured_at = Local::now();
 
-        let bgr = match text_ocr::rgba_to_bgr_mat(&raw, width, height) {
+        let bgr = match rgba_to_bgr_mat(&raw, width, height) {
             Ok(m) => m,
             Err(e) => {
                 println!("⚠️  [写线程] 转 BGR 图失败，跳过本轮: {}", e);
@@ -115,20 +114,20 @@ fn recognize_game_info(
         }
     };
 
-    let map_name = text_ocr::match_map_name(&blocks, width, height, ocr_cfg)
+    let map_name = ocr::match_map_name(&blocks, width, height, ocr_cfg)
         .map(|(name, _)| name)
         .unwrap_or_else(|| previous.map_name.clone());
 
-    let hp_percent = text_ocr::extract_hp(&blocks, width, height, ocr_cfg)
+    let hp_percent = ocr::extract_hp(&blocks, width, height, ocr_cfg)
         .map(|(_, _, pct)| pct.round().clamp(0.0, 100.0) as u8)
         .unwrap_or(previous.hp_percent);
 
-    let monsters = text_ocr::match_monsters(&blocks, &app_config.target_monsters, ocr_cfg)
+    let monsters = ocr::match_monsters(&blocks, &app_config.target_monsters, ocr_cfg)
         .into_iter()
         .map(|(name, _, _)| name)
         .collect();
 
-    let items = text_ocr::match_items(&blocks, &app_config.target_items, ocr_cfg)
+    let items = ocr::match_items(&blocks, &app_config.target_items, ocr_cfg)
         .into_iter()
         .map(|(name, _, _)| name)
         .collect();

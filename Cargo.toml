@@ -12,7 +12,6 @@ opencv = { version = "0.98", default-features = false, features = ["imgproc", "i
 serde = { version = "1.0", features = ["derive"] }
 toml = "0.8"
 chrono = "0.4"
-rand="0.8"
 ocr-rs = "2.3"
 rodio = "0.19"
 strsim="0.11"

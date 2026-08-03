@@ -12,6 +12,30 @@ use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Mutex, OnceLock};
 use std::time::Instant;
 
+/// 游戏当前状态快照，写线程识别后填充，读线程通过 channel 接收使用。
+#[derive(Debug, Clone)]
+pub struct GameInfo {
+    pub map_name: String,
+    pub player_position: Option<(i32, i32)>,
+    pub hp_percent: u8,
+    pub monsters: Vec<String>,
+    pub items: Vec<String>,
+    pub updated_at: Option<Instant>,
+}
+
+impl Default for GameInfo {
+    fn default() -> Self {
+        GameInfo {
+            map_name: String::new(),
+            player_position: None,
+            hp_percent: 100,
+            monsters: Vec::new(),
+            items: Vec::new(),
+            updated_at: None,
+        }
+    }
+}
+
 static WRITER_ENABLED: AtomicBool = AtomicBool::new(true);
 
 pub fn enable_writer() {

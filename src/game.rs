@@ -1,10 +1,7 @@
 pub mod actions;
 pub mod alarm;
 pub mod app_config;
-pub mod bot;
 pub mod button_finder;
-pub mod game_info;
-pub mod mouse_action;
 pub mod ocr;
 pub mod position_reader;
 pub mod quit_game_bot;

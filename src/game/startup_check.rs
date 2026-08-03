@@ -13,9 +13,9 @@
 
 use crate::game::actions;
 use crate::game::alarm;
-use crate::game::button_finder::{ButtonFinder, rgba_to_gray_mat};
+use crate::game::button_finder::ButtonFinder;
 use crate::game::state::{self, ButtonInfo};
-use crate::game::util::capture_window;
+use crate::game::util::{capture_window, rgba_to_gray_mat};
 use enigo::Enigo;
 use std::collections::HashMap;
 use std::thread;
