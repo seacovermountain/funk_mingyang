@@ -33,6 +33,7 @@ use opencv::{
     prelude::*,
 };
 pub const TEMPLATE_REFERENCE_PHYSICAL_WIDTH: f64 = 3000.0;
+pub const TEMPLATE_REFERENCE_PHYSICAL_HEIGHT: f64 = 1716.0;
 
 /// 一个数字/符号的参考模板小图。label 是 "0".."9" 或 ","。
 #[derive(Debug, Clone)]
@@ -50,17 +51,12 @@ pub struct PositionReaderConfig {
     pub roi_right_frac: f64,
     pub roi_bottom_frac: f64,
 
-    // 🎯 坐标数字实际是白色/浅灰色文字(不是"危险"两个字的红色！)，
-    // 跟 monster_detector.rs 里怪物名字识别用的是同一套白色文字阈值思路:
-    // 在 HSV 空间卡 S(饱和度)足够低 + V(明度)足够高。
-    // V 下限别设太高,数字受描边/半透明底板影响,亮度不一定纯白。
     pub s_max: f64,
     pub v_min: f64,
 
     pub close_kernel_w: i32,
     pub close_kernel_h: i32,
 
-    // 数字字符的连通域尺寸过滤,比怪物名字的文字框小得多
     pub min_h: i32,
     pub max_h: i32,
     pub min_w: i32,
@@ -70,10 +66,6 @@ pub struct PositionReaderConfig {
 
 impl Default for PositionReaderConfig {
     fn default() -> Self {
-        // ✅ 这套 ROI 比例是用真实截图做像素级红色文字定位实测标定出来的
-        // (3000x1716 截图下,"危险 173,84" 文字紧密边界框是
-        // x:[2564,2918] y:[448,503],换算比例后各边留了一点余量,
-        // 给坐标数字位数变化(比如从个位数变成4位数)留空间)。
         Self {
             roi_left_frac: 0.83,
             roi_top_frac: 0.25,
@@ -83,19 +75,9 @@ impl Default for PositionReaderConfig {
             s_max: 60.0,
             v_min: 150.0,
 
-            // 🎯 闭运算核宽度必须小于任意两个相邻字符之间的天然像素间隙,
-            // 否则会把不同数字粘连成一个连通块(比如"164,"整个粘一起)。
-            // 数字字体间距很紧凑,横向核基本不需要,设成 1 相当于不做横向桥接;
-            // 纵向核用来修补单个数字笔画内部的抗锯齿断裂。
             close_kernel_w: 1,
             close_kernel_h: 3,
 
-            // 🎯 数字字符的连通域尺寸过滤,比怪物名字的文字框小得多。
-            // ⚠️ 下限不能卡太高:逗号笔画天然比数字小很多(可能只有几像素
-            // 宽高),之前 min_h:8/min_w:3/min_area:15 会把逗号整个刷掉,
-            // 导致 chars.split(',') 永远拼不出合法的两段坐标。
-            // 这套 ROI 已经做过白色阈值 + 区域裁剪,噪点来源有限,
-            // 调低下限风险可控。
             min_h: 3,
             max_h: 30,
             min_w: 1,
@@ -105,7 +87,27 @@ impl Default for PositionReaderConfig {
     }
 }
 
-/// 检测出的候选字符框(相对传入 ROI 的坐标系,不是整张原图坐标)
+impl PositionReaderConfig {
+    pub fn scaled_for(&self, scale_x: f64, scale_y: f64) -> PositionReaderConfig {
+        let sx = scale_x.max(0.05);
+        let sy = scale_y.max(0.05);
+        let scale_area = sx * sy;
+
+        let scale_i32 = |v: i32, s: f64| ((v as f64) * s).round().max(1.0) as i32;
+
+        PositionReaderConfig {
+            close_kernel_w: scale_i32(self.close_kernel_w, sx),
+            close_kernel_h: scale_i32(self.close_kernel_h, sy),
+            min_h: scale_i32(self.min_h, sy),
+            max_h: scale_i32(self.max_h, sy),
+            min_w: scale_i32(self.min_w, sx),
+            max_w: scale_i32(self.max_w, sx),
+            min_area: ((self.min_area as f64) * scale_area).round().max(1.0) as i32,
+            ..self.clone()
+        }
+    }
+}
+
 #[derive(Debug, Clone, Copy)]
 struct CharBox {
     x: i32,
@@ -120,9 +122,6 @@ impl CharBox {
     }
 }
 
-/// 编译时嵌入的数字/逗号模板图，(标签, 图片字节)。原来是从
-/// `assets/digits/` 目录动态读一批 png，现在这批图片就 11 张、基本
-/// 不会变，嵌进可执行文件后部署不用再带这个文件夹。
 const EMBEDDED_DIGIT_TEMPLATES: &[(&str, &[u8])] = &[
     ("0", include_bytes!("../../assets/digits/0.png")),
     ("1", include_bytes!("../../assets/digits/1.png")),
@@ -137,7 +136,6 @@ const EMBEDDED_DIGIT_TEMPLATES: &[(&str, &[u8])] = &[
     (",", include_bytes!("../../assets/digits/comma.png")),
 ];
 
-/// 📂 从编译时嵌入的数据加载数字/逗号模板（不再读外部目录）。
 pub fn load_digit_templates() -> Result<Vec<DigitTemplate>> {
     let mut templates = Vec::with_capacity(EMBEDDED_DIGIT_TEMPLATES.len());
 
@@ -164,7 +162,6 @@ pub fn load_digit_templates() -> Result<Vec<DigitTemplate>> {
     Ok(templates)
 }
 
-/// 把 ROI 配置换算成原图坐标系下的绝对矩形
 fn compute_roi_rect(frame_w: i32, frame_h: i32, cfg: &PositionReaderConfig) -> Rect {
     let x = (frame_w as f64 * cfg.roi_left_frac) as i32;
     let y = (frame_h as f64 * cfg.roi_top_frac) as i32;
@@ -173,12 +170,7 @@ fn compute_roi_rect(frame_w: i32, frame_h: i32, cfg: &PositionReaderConfig) -> R
     Rect::new(x, y, w.max(1), h.max(1))
 }
 
-/// 在裁出来的坐标区域小图里,检测出每个数字/逗号字符的候选框
-/// (返回坐标是相对这块小图自身的坐标系)。
 fn detect_char_boxes(roi_bgr: &Mat, cfg: &PositionReaderConfig) -> Result<Vec<CharBox>> {
-    // 🎯 白色文字阈值:转 HSV,卡 S(饱和度)够低 + V(明度)够高。
-    // 跟 monster_detector.rs 里怪物名字检测是同一套思路,
-    // 因为坐标数字本身就是白色/浅灰色,不是"危险"两个字的红色。
     let mut hsv = Mat::default();
     imgproc::cvt_color(
         roi_bgr,
@@ -235,19 +227,18 @@ fn detect_char_boxes(roi_bgr: &Mat, cfg: &PositionReaderConfig) -> Result<Vec<Ch
         }
     }
 
-    // 从左到右排序,数字才能拼对顺序
     boxes.sort_by_key(|b| b.x);
 
     Ok(boxes)
 }
 
-/// 对单个字符候选框做模板匹配,识别是哪个数字/逗号
 fn match_char(
     roi_bgr: &Mat,
     char_box: &CharBox,
     templates: &[DigitTemplate],
     min_confidence: f32,
-    scale_factor: f64,
+    scale_x: f64,
+    scale_y: f64,
 ) -> Result<Option<(String, f32)>> {
     const PADDING: i32 = 2;
 
@@ -269,18 +260,13 @@ fn match_char(
     let mut best_score: f32 = 0.0;
 
     for tpl in templates {
-        // 🎯 按窗口实际物理分辨率 vs 模板截图时的基准分辨率,动态缩放模板,
-        // 跟 match_icon.rs 里按钮匹配用的是同一套思路 —— 否则窗口一旦被
-        // 拖到跟截图时不一样的尺寸,数字模板匹配会整体失效。
-        let scaled_template = if (scale_factor - 1.0).abs() > 0.01 {
-            let new_w = ((tpl.template.cols() as f64) * scale_factor)
-                .round()
-                .max(1.0) as i32;
-            let new_h = ((tpl.template.rows() as f64) * scale_factor)
-                .round()
-                .max(1.0) as i32;
+        let need_resize = (scale_x - 1.0).abs() > 0.01 || (scale_y - 1.0).abs() > 0.01;
+        let scaled_template = if need_resize {
+            let new_w = ((tpl.template.cols() as f64) * scale_x).round().max(1.0) as i32;
+            let new_h = ((tpl.template.rows() as f64) * scale_y).round().max(1.0) as i32;
             let mut resized = Mat::default();
-            let interpolation = if scale_factor < 1.0 {
+            let avg_scale = (scale_x + scale_y) / 2.0;
+            let interpolation = if avg_scale < 1.0 {
                 imgproc::INTER_AREA
             } else {
                 imgproc::INTER_LINEAR
@@ -334,18 +320,6 @@ fn match_char(
         }
     }
 
-    // 🐛 调试用:把每个候选框实际匹配到的最高分数打出来,方便定位到底是
-    // 哪个字符分数不够、差多少 —— 之前"整体识别失败"的日志只会说
-    // "未能识别到角色坐标",看不出具体卡在哪一步。
-    // println!(
-    //     "   🔢 [坐标字符匹配] 候选框(w={},h={}) 最佳匹配: {:?} | 分数: {:.2}% (阈值: {:.2}%)",
-    //     char_box.w,
-    //     char_box.h,
-    //     best_label,
-    //     best_score * 100.0,
-    //     min_confidence * 100.0
-    // );
-
     if best_score >= min_confidence {
         Ok(best_label.map(|l| (l, best_score)))
     } else {
@@ -353,13 +327,6 @@ fn match_char(
     }
 }
 
-/// 🎯 主函数:从当前整帧(BGR Mat)里读出角色实时坐标 (x, y)。
-///
-/// 每个候选框独立跟模板匹配,匹配不上(分数不够)的直接跳过丢弃,
-/// 不会导致整轮识别失败 —— 标签区域偶尔漏出的噪点、或者任何跟
-/// 数字/逗号模板对不上的候选框,都会被这一步自然过滤掉。
-/// 最后把匹配成功的字符拼起来,尝试解析成 "数字,数字" 格式,
-/// 解析不出来(比如逗号数量不对)才判定这一轮读取失败。
 pub fn read_position(
     frame_bgr: &Mat,
     cfg: &PositionReaderConfig,
@@ -370,13 +337,17 @@ pub fn read_position(
         return None;
     }
 
+    let scale_x = frame_bgr.cols() as f64 / TEMPLATE_REFERENCE_PHYSICAL_WIDTH;
+    let scale_y = frame_bgr.rows() as f64 / TEMPLATE_REFERENCE_PHYSICAL_HEIGHT;
+    let scaled_cfg = cfg.scaled_for(scale_x, scale_y);
+
     let roi_rect = compute_roi_rect(frame_bgr.cols(), frame_bgr.rows(), cfg);
     let roi_img = match Mat::roi(frame_bgr, roi_rect).and_then(|r| r.try_clone()) {
         Ok(r) => r,
         Err(_) => return None,
     };
 
-    let boxes = match detect_char_boxes(&roi_img, cfg) {
+    let boxes = match detect_char_boxes(&roi_img, &scaled_cfg) {
         Ok(b) => b,
         Err(_) => return None,
     };
@@ -385,58 +356,36 @@ pub fn read_position(
         return None;
     }
 
-    // 🎯 按当前整帧的物理宽度 vs 模板截图时的基准分辨率,算出精确缩放
-    // 系数,传给 match_char 动态缩放数字模板 —— 跟 match_icon.rs 里
-    // 按钮匹配的自适应缩放是同一套思路,避免窗口分辨率一变整套坐标
-    // 识别就失效。
-    let scale_factor = frame_bgr.cols() as f64 / TEMPLATE_REFERENCE_PHYSICAL_WIDTH;
-
-    // 🎯 不再用"候选框间距"去猜哪些是标签区域漏出来的噪点(实测证明
-    // 这个假设不总成立,数字内部偶尔间距也会比标签间隙大,会误伤真实
-    // 数字)。改成让匹配结果本身说话:每个候选框都去跟模板匹配,
-    // 匹配不上(分数不够)的直接跳过丢弃,只用匹配成功的字符拼坐标。
-    // 真正的噪点去匹配 0~9/逗号模板,分数几乎不可能达标,会被自然
-    // 过滤掉;真实数字从实测看置信度普遍在98%以上,不会被误伤。
     let mut chars = String::new();
     for b in &boxes {
         if let Ok(Some((label, _score))) =
-            match_char(&roi_img, b, templates, min_confidence, scale_factor)
+            match_char(&roi_img, b, templates, min_confidence, scale_x, scale_y)
         {
             chars.push_str(&label);
         }
-        // 匹配失败(分数不够/出错)的候选框直接跳过,不中断整轮识别。
     }
 
+    // 🐛 之前这里有个 bug：拆出超过 2 段(比如误识别出多余的逗号)时，
+    // 会尝试"硬凑"出一个坐标——但凑的逻辑是错的，会把中间某一段数字
+    // 拼成一个跟真实坐标完全不沾边的错误值(实测抓到过真实案例：一帧
+    // 正常坐标被拆成三段，硬凑出一个和上一帧相差 204 个单位的离谱坐标，
+    // 这个坏值被标定逻辑当成"真实移动"吃了进去，把整个移动矩阵都
+    // 带偏了)。
+    //
+    // 正确做法：拆出来不是正好 2 段，就是这一帧没读对，老老实实返回
+    // None，让调用方(writer.rs)用回上一帧的旧坐标兜底，好过硬凑一个
+    // 可能错得离谱的"坐标"出来污染下游(标定/寻路)的计算。
     let parts: Vec<&str> = chars.split(',').collect();
-    let mut x = 0;
-    let mut y = 0;
-    if parts.len() > 2 {
-        for i in parts.iter() {
-            print!("---------------------------------{} ", i);
-            if i.len() > 0 {
-                if x > 0 {
-                    y = i.trim().parse::<i32>().unwrap_or(0);
-                } else {
-                    x = i.parse::<i32>().unwrap_or(0);
-                }
-            }
-        }
-    } else {
-        if parts.len() == 2 {
-            x = parts[0].trim().parse::<i32>().unwrap_or(0);
-            y = parts[1].trim().parse::<i32>().unwrap_or(0);
-        } else {
-            return None;
-        }
+    if parts.len() != 2 {
+        return None;
     }
 
-    let x: i32 = x;
-    let y: i32 = y;
+    let x: i32 = parts[0].trim().parse().ok()?;
+    let y: i32 = parts[1].trim().parse().ok()?;
 
     Some((x, y))
 }
 
-/// 🗂️ 调试用:把坐标区域整块裁出来存盘,肉眼核对 ROI 范围对不对。
 pub fn debug_dump_position_roi(
     frame_bgr: &Mat,
     cfg: &PositionReaderConfig,
@@ -449,16 +398,18 @@ pub fn debug_dump_position_roi(
     Ok(())
 }
 
-/// 🗂️ 调试/建模板专用:把坐标区域里检测到的每个字符候选框单独裁剪存盘,
-/// 方便挑出来建数字模板库。
 pub fn debug_crop_digit_boxes(
     frame_bgr: &Mat,
     cfg: &PositionReaderConfig,
     out_dir: &str,
 ) -> Result<()> {
+    let scale_x = frame_bgr.cols() as f64 / TEMPLATE_REFERENCE_PHYSICAL_WIDTH;
+    let scale_y = frame_bgr.rows() as f64 / TEMPLATE_REFERENCE_PHYSICAL_HEIGHT;
+    let scaled_cfg = cfg.scaled_for(scale_x, scale_y);
+
     let roi_rect = compute_roi_rect(frame_bgr.cols(), frame_bgr.rows(), cfg);
     let roi_img = Mat::roi(frame_bgr, roi_rect)?.try_clone()?;
-    let boxes = detect_char_boxes(&roi_img, cfg)?;
+    let boxes = detect_char_boxes(&roi_img, &scaled_cfg)?;
 
     std::fs::create_dir_all(out_dir).ok();
 

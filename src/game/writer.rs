@@ -1,6 +1,13 @@
 // src/game/writer.rs
 //
-// 写线程：截图 -> OCR/坐标识别 -> 把这一轮识别结果整体发给读线程（channel）。
+// 写线程：截图 -> OCR/坐标识别 -> 把这一轮识别结果写进共享状态
+// (state::set_latest_game_info)，覆盖式更新。
+//
+// 🔄 不再用 channel 发给读线程——channel 会让读线程的节奏被写线程锁死
+// (写一次、读线程才能动一次)，写线程识别一帧耗时比较长，读线程就会
+// 跟着"一步一停"，拾取/攻击/寻路这些点击动作全都会被拖得断断续续。
+// 现在写线程只管尽量快地持续更新共享状态，读线程(reader.rs)按自己
+// 更快、更固定的节奏去读这个共享状态做决策，两边互不阻塞。
 //
 // 受 state::is_writer_enabled() 这个全局开关控制：
 // 关闭时只是睡一下继续循环检查，线程本身不退出，随时可以被重新打开。
@@ -12,7 +19,6 @@ use crate::game::state::{self, GameInfo};
 use crate::game::util::{capture_window, rgba_to_bgr_mat};
 use chrono::Local;
 use opencv::prelude::*;
-use std::sync::mpsc::Sender;
 use std::thread;
 use std::time::{Duration, Instant};
 use xcap::Window;
@@ -30,7 +36,6 @@ pub fn run(
     ocr_recognizer: TextOcrRecognizer,
     app_config: AppConfig,
     digit_templates: Vec<DigitTemplate>,
-    tx: Sender<GameInfo>,
 ) {
     let ocr_cfg = TextOcrConfig::default();
     let position_cfg = PositionReaderConfig::default();
@@ -52,8 +57,6 @@ pub fn run(
                 continue;
             }
         };
-        // 时间戳在截图刚拿到手时立刻记下，代表"这一帧画面是什么时候截的"，
-        // 不是"处理到第几步的时候"，避免后面识别耗时把时间戳拖晚。
         let captured_at = Local::now();
 
         let bgr = match rgba_to_bgr_mat(&raw, width, height) {
@@ -82,11 +85,9 @@ pub fn run(
 
         previous = info.clone();
 
-        // 读线程掉了（比如 panic 退出）就没必要继续截图识别了，直接结束写线程。
-        if tx.send(info).is_err() {
-            println!("⚠️  [写线程] 读线程已断开，写线程退出");
-            break;
-        }
+        // 覆盖式写入共享状态——读线程随时按自己的节奏来读最新这一份，
+        // 不需要这里等谁来"收"，写完立刻进入下一轮截图识别。
+        state::set_latest_game_info(info);
 
         thread::sleep(CAPTURE_INTERVAL);
     }
@@ -122,7 +123,15 @@ fn recognize_game_info(
         .map(|(_, _, pct)| pct.round().clamp(0.0, 100.0) as u8)
         .unwrap_or(previous.hp_percent);
 
-    let monsters = ocr::match_monsters(&blocks, &app_config.target_monsters, ocr_cfg)
+    let monster_matches = ocr::match_monsters(&blocks, &app_config.target_monsters, ocr_cfg);
+    // 🛡️ 顺手把每个匹配到的怪物名字框位置也存下来，移动模块寻路点击
+    // 前会拿这些框做规避判断——点在活着的怪物身上，游戏经常会判定成
+    // "选中目标"而不是"移动"，人物会纹丝不动。
+    let monster_boxes = monster_matches
+        .iter()
+        .map(|(_, text_box, _)| (text_box.x, text_box.y, text_box.w, text_box.h))
+        .collect();
+    let monsters = monster_matches
         .into_iter()
         .map(|(name, _, _)| name)
         .collect();
@@ -132,9 +141,13 @@ fn recognize_game_info(
         .map(|(name, _, _)| name)
         .collect();
 
-    let player_position =
-        position_reader::read_position(bgr, position_cfg, digit_templates, POSITION_MIN_CONFIDENCE)
-            .or(previous.player_position);
+    // 🎯 先记住这一帧是不是真的读到了坐标，再决定要不要用旧值兜底——
+    // 下游(卡住检测)必须能区分"这是这一帧刚读到的新坐标"还是"读失败
+    // 沿用的旧坐标"，否则会把"没读到"误判成"角色没动"。
+    let fresh_position =
+        position_reader::read_position(bgr, position_cfg, digit_templates, POSITION_MIN_CONFIDENCE);
+    let position_fresh = fresh_position.is_some();
+    let player_position = fresh_position.or(previous.player_position);
 
     GameInfo {
         map_name,
@@ -143,5 +156,9 @@ fn recognize_game_info(
         monsters,
         items,
         updated_at: Some(Instant::now()),
+        capture_width: width as u32,
+        capture_height: height as u32,
+        position_fresh,
+        monster_boxes,
     }
 }
